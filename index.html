@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>VideoCompta CRM</title>
+  <style>
+    :root {
+      --bg: oklch(0.2 0.011 264);
+      --card: oklch(0.26 0.012 264);
+      --accent: oklch(0.62 0.17 255);
+      --accent-hover: oklch(0.68 0.17 255);
+      --text: oklch(0.97 0.005 264);
+      --muted: oklch(0.7 0.01 264);
+      --border: oklch(0.34 0.012 264);
+      --error: oklch(0.7 0.18 25);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 380px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px 32px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+    .logo {
+      width: 56px; height: 56px;
+      border-radius: 14px;
+      background: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 700; font-size: 30px; color: #fff;
+      margin: 0 auto 18px;
+    }
+    h1 { font-size: 20px; text-align: center; font-weight: 650; }
+    .sub { text-align: center; color: var(--muted); font-size: 13px; margin-top: 6px; margin-bottom: 26px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    .field { margin-bottom: 16px; }
+    input[type=email], input[type=password] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: var(--text);
+      font-size: 15px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus { border-color: var(--accent); }
+    .remember { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 13px; color: var(--muted); }
+    .remember input { width: 16px; height: 16px; accent-color: var(--accent); }
+    button {
+      width: 100%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 13px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { opacity: .6; cursor: default; }
+    .error {
+      display: none;
+      background: oklch(0.28 0.06 25);
+      border: 1px solid var(--error);
+      color: var(--error);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+    .foot { text-align: center; color: var(--muted); font-size: 11px; margin-top: 22px; line-height: 1.5; }
+    #app-frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #faf9f5; display: none; }
+    #splash { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: var(--bg); color: var(--muted); font-size: 14px; z-index: 5; }
+  </style>
+</head>
+<body>
+  <div id="splash">Déchiffrement de l'espace…</div>
+
+  <div class="card" id="login-card">
+    <div class="logo">V</div>
+    <h1>VideoCompta CRM</h1>
+    <div class="sub">Espace privé · accès réservé</div>
+
+    <div class="error" id="error"></div>
+
+    <form id="login-form" autocomplete="on">
+      <div class="field">
+        <label for="email">Adresse e-mail</label>
+        <input type="email" id="email" name="email" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <label class="remember">
+        <input type="checkbox" id="remember" checked>
+        Rester connectée sur cet appareil
+      </label>
+      <button type="submit" id="submit">Se connecter</button>
+    </form>
+
+    <div class="foot">Contenu chiffré de bout en bout.<br>Seul le compte autorisé peut le déchiffrer.</div>
+  </div>
+
+  <iframe id="app-frame" title="VideoCompta CRM"></iframe>
+
+  <script>
+  (function () {
+    // Must stay in sync with build/encrypt.mjs
+    const PBKDF2_ITERATIONS = 310000;
+    const ALLOWED_EMAIL = "zo.editfree@gmail.com";
+    const LS_KEY = "vc_session_key_v1";
+
+    // Pre-seed the VideoCompta app's own account (it keeps users + data in
+    // localStorage, which an about:srcdoc iframe shares with this page). This
+    // means the authorized user lands straight inside the app, already logged
+    // in — no second login. The password is the one just typed at the gate, so
+    // it is NEVER hardcoded in this served file. Runs before the iframe mounts.
+    function seedAppAccount(password) {
+      if (!password) return; // auto-login path: account already seeded on this device
+      const USERS_KEY = "vcompta_users";
+      const SESSION_KEY = "vcompta_session";
+      let users = {};
+      try { users = JSON.parse(localStorage.getItem(USERS_KEY) || "{}"); } catch (e) {}
+      if (!users[ALLOWED_EMAIL]) {
+        users[ALLOWED_EMAIL] = { password: password };
+        localStorage.setItem(USERS_KEY, JSON.stringify(users));
+      }
+      // Auto-login on first visit only, so an explicit logout is respected.
+      if (localStorage.getItem("vc_bootstrapped") !== "1") {
+        localStorage.setItem(SESSION_KEY, ALLOWED_EMAIL);
+        localStorage.setItem("vc_bootstrapped", "1");
+      }
+    }
+
+    const $ = (id) => document.getElementById(id);
+    const subtle = window.crypto.subtle;
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+
+    function showError(msg) {
+      const e = $("error");
+      e.textContent = msg;
+      e.style.display = "block";
+    }
+    function clearError() { $("error").style.display = "none"; }
+
+    function b64ToBytes(b64) {
+      const bin = atob(b64.trim());
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+    function bytesToB64(bytes) {
+      let s = "";
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    }
+
+    let encBlobPromise = null;
+    function loadEncBlob() {
+      if (!encBlobPromise) {
+        encBlobPromise = fetch("app.enc", { cache: "no-store" })
+          .then((r) => { if (!r.ok) throw new Error("app.enc introuvable"); return r.text(); })
+          .then((t) => b64ToBytes(t));
+      }
+      return encBlobPromise;
+    }
+
+    async function deriveKey(password, salt) {
+      const baseKey = await subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+      return subtle.deriveKey(
+        { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+        baseKey,
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["decrypt"]
+      );
+    }
+
+    async function decryptWithKey(key, blob) {
+      const iv = blob.slice(16, 28);
+      const ciphertext = blob.slice(28);
+      const plain = await subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+      return dec.decode(plain);
+    }
+
+    function launchApp(html, password) {
+      seedAppAccount(password);
+      $("login-card").style.display = "none";
+      $("splash").style.display = "none";
+      const frame = $("app-frame");
+      frame.style.display = "block";
+      frame.srcdoc = html;
+    }
+
+    async function tryAutoLogin() {
+      const saved = localStorage.getItem(LS_KEY);
+      if (!saved) return false;
+      try {
+        $("splash").style.display = "flex";
+        const blob = await loadEncBlob();
+        const rawKey = b64ToBytes(saved);
+        const key = await subtle.importKey("raw", rawKey, { name: "AES-GCM" }, true, ["decrypt"]);
+        const html = await decryptWithKey(key, blob);
+        launchApp(html); // auto-login: no password available, account already on device
+        return true;
+      } catch (e) {
+        localStorage.removeItem(LS_KEY); // stale/invalid key
+        $("splash").style.display = "none";
+        return false;
+      }
+    }
+
+    $("login-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      clearError();
+      const email = $("email").value.trim().toLowerCase();
+      const password = $("password").value;
+      const remember = $("remember").checked;
+
+      if (email !== ALLOWED_EMAIL) {
+        showError("Ce compte n'est pas autorisé à accéder à cet espace.");
+        return;
+      }
+
+      const btn = $("submit");
+      btn.disabled = true;
+      btn.textContent = "Connexion…";
+
+      try {
+        const blob = await loadEncBlob();
+        const salt = blob.slice(0, 16);
+        const key = await deriveKey(password, salt);
+        let html;
+        try {
+          html = await decryptWithKey(key, blob);
+        } catch (e) {
+          showError("Mot de passe incorrect.");
+          btn.disabled = false;
+          btn.textContent = "Se connecter";
+          return;
+        }
+        if (remember) {
+          const rawKey = new Uint8Array(await subtle.exportKey("raw", key));
+          localStorage.setItem(LS_KEY, bytesToB64(rawKey));
+        }
+        launchApp(html, password);
+      } catch (e) {
+        showError("Erreur: " + e.message);
+        btn.disabled = false;
+        btn.textContent = "Se connecter";
+      }
+    });
+
+    tryAutoLogin();
+  })();
+  </script>
+</body>
+</html>
